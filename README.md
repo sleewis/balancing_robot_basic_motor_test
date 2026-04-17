@@ -1,6 +1,6 @@
 # Balancing Robot – Basic Motor Test
 
-Testschets voor open-loop sinusoïdale **Field Oriented Control (FOC)** van twee brushless DC-motoren op een ESP32-gebaseerd motorstuurbordje. Dit project is de bouwsteen voor een zelfbalancerende robot (Segway-stijl) die later ook via Bluetooth met een XBOX-controller aangestuurd wordt.
+Testschets voor **Field Oriented Control (FOC)** in voltage-mode van twee brushless DC-motoren op een ESP32-gebaseerd motorstuurbordje. Dit project is de bouwsteen voor een zelfbalancerende robot (Segway-stijl) die later ook via Bluetooth met een XBOX-controller aangestuurd wordt.
 
 ---
 
@@ -31,7 +31,7 @@ Testschets voor open-loop sinusoïdale **Field Oriented Control (FOC)** van twee
 
 ## Werkingsprincipe
 
-De schets implementeert **open-loop sinusoïdale FOC** zonder stroom- of snelheidsregelaar:
+De schets implementeert **voltage-mode sinusoïdale FOC**:
 
 1. **Rotoruitlijning** – bij opstart wordt een kleine spanning aangelegd op een bekende elektrische hoek (0 rad). De rotor trekt naar de bijbehorende positie. Na 3 seconden wordt de mechanische hoek gemeten en de **elektrische offset** berekend.
 

@@ -1,7 +1,9 @@
 /*
  * balancing_robot_basic_motor_test.ino
  *
- * Testschets voor open-loop sinusoïdale FOC-aansturing van BLDC-motoren.
+ * Testschets voor sinusoïdale FOC-aansturing van BLDC-motoren.
+ * De commutatie is gesloten-lus (encoderhoek stuurt het statorveld),
+ * maar de spanning is open-loop (geen stroom- of snelheidsregelaar).
  * Doel: valideren dat de motoren correct draaien vóór integratie in
  * het volledige zelfbalancerende-robot project.
  *

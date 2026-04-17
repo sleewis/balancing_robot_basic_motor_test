@@ -1,20 +1,20 @@
 /*
  * Motor.h
  *
- * Klasse-declaratie voor open-loop sinusoïdale FOC-aansturing van één
+ * Klasse-declaratie voor sinusoïdale FOC-aansturing (voltage-mode) van één
  * drie-fase BLDC-motor met AS5600 magnetische encoder.
  *
- * Werkingsprincipe (vereenvoudigd FOC):
- *   1. Lees de mechanische rotorhoek via de AS5600 (I²C).
+ * Werkingsprincipe:
+ *   1. Lees de mechanische rotorhoek via de AS5600 (I²C).         ← gesloten lus
  *   2. Bereken de elektrische hoek: θ_elec = θ_mech × polePairs + offset + π/2
  *      (de π/2 offset zorgt dat het magnetisch veld loodrecht op de rotor staat
  *       → maximaal koppel bij gegeven spanning).
  *   3. Genereer sinusoïdaal drie-fase PWM op basis van θ_elec.
  *
- * Beperkingen van deze implementatie:
- *   - Open-loop spanning: geen stroom- of snelheidsregelaar (geen PID).
- *   - Fase C wordt afgeleid als -Ia - Ib (Kirchhoff), niet direct gemeten.
- *   - updateCurrent() wordt bewaard voor toekomstige gesloten-lus uitbreiding.
+ *   De spanningsamplitude is een vaste waarde (voltage-mode / open-loop spanning):
+ *   er is geen stroom- of snelheidsregelaar. updateCurrent() is al aanwezig
+ *   als bouwsteen voor een toekomstige gesloten-lus stroomregelaar.
+ *   Fase C wordt afgeleid als -Ia - Ib (Kirchhoff), niet direct gemeten.
  */
 
 #ifndef MOTOR_H
