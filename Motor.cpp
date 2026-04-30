@@ -28,7 +28,7 @@ void Motor::setOffset(float o) {
 }
 
 void Motor::setPhaseVoltage(float angle, float voltage) {
-    float a = sinf(angle)             * voltage;
+    float a = sinf(angle)              * voltage;
     float b = sinf(angle - 2.0943951f) * voltage;
     float c = sinf(angle - 4.1887902f) * voltage;
 

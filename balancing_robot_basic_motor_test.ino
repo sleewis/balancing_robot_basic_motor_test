@@ -7,7 +7,7 @@
 #define USE_ENC1    true    // MT6835 encoder motor 1
 #define USE_ENC2    false   // MT6835 encoder motor 2
 #define USE_IMU     false   // BMI088 accel + gyro
-#define USE_MOTOR1  false   // motor 1 aansturen
+#define USE_MOTOR1  true    // motor 1 aansturen
 #define USE_MOTOR2  false   // motor 2 aansturen
 //
 //  WiFi / OTA:
@@ -64,8 +64,16 @@
 #define CS_BMI_GYR   4   // vrije pin – definitief toewijzen na 74HC42
 
 #define SENSOR_HZ        1000   // regelloop-frequentie [Hz]
+#define MA_SIZE            16   // moving-average venster voor snelheid [samples = 16 ms]
 #define ALIGN_VOLTAGE_V  0.3f
-#define DRIVE_VOLTAGE_V  0.6f
+
+//  Als hij draait maar overshoort of oscilleert → Kp omlaag.
+//  Als hij traag opkomt → Kp omhoog.
+//  Als hij de 10 rad/s niet haalt in steady-state → Ki helpt dat.
+#define SPEED_KP         0.05f  // proportionele gain  – afstellen na testen
+#define SPEED_KI         0.10f  // integrerende gain   – afstellen na testen
+#define SPEED_KD         0.00f  // differentiërende gain
+#define SPEED_OUT_MAX    1.5f   // maximale rijspanning [V]
 #define POLE_PAIRS       11
 
 SPIClass sensorSPI(VSPI);
@@ -84,6 +92,7 @@ struct SensorData {
     float enc1_rads, enc2_rads;
     float accel_x, accel_y, accel_z;
     float gyro_x,  gyro_y,  gyro_z;
+    float speedSetpoint, driveOut;  // PID telemetrie
 };
 
 // ── Telnet (alleen Core 0) ────────────────────────────────────
@@ -95,10 +104,8 @@ static portMUX_TYPE     dataMux       = portMUX_INITIALIZER_UNLOCKED;
 static SensorData       sharedSensors = {};
 static volatile bool    otaActive     = false;
 
-// ── Snelheidsberekening ───────────────────────────────────────
+// ── Snelheidsberekening met moving-average ────────────────────
 // Alleen toegankelijk vanuit Core 1 (motorTask) – geen lock nodig.
-static float prevEnc1 = -1.0f;
-static float prevEnc2 = -1.0f;
 
 static float angleDelta(float cur, float prev) {
     float d = cur - prev;
@@ -107,28 +114,68 @@ static float angleDelta(float cur, float prev) {
     return d;
 }
 
+// Ringbuffer van hoekdeltas; geeft 0 terug zolang de buffer niet vol is.
+struct VelocityMA {
+    float buf[MA_SIZE] = {};
+    float sum           = 0.0f;
+    int   idx           = 0;
+    int   count         = 0;
+    float prevAngle     = -1.0f;  // -1 = nog niet geïnitialiseerd
+
+    float update(float angle) {
+        float delta = (prevAngle < 0.0f) ? 0.0f : angleDelta(angle, prevAngle);
+        prevAngle = angle;
+        sum -= buf[idx];
+        buf[idx] = delta;
+        sum += delta;
+        idx = (idx + 1) % MA_SIZE;
+        if (count < MA_SIZE) count++;
+        return (count < MA_SIZE) ? 0.0f
+               : (sum / MA_SIZE) * (float(M_PI) / 180.0f) * SENSOR_HZ;
+    }
+};
+
+static VelocityMA enc1MA, enc2MA;
+
 // ── Sensors uitlezen (alleen Core 1) ─────────────────────────
 // Alleen actieve sensoren worden gelezen; geen simulatiedata.
-// TODO: bij zichtbare ruis in de regelaar een moving-average toevoegen over bijv.
-//       8–16 samples (ringbuffer per encoder, gemiddelde van de deltas vóór omzetting).
 static void readSensors(SensorData& d) {
 #if USE_ENC1
     d.enc1_deg  = mt6835_readAngle(CS_ENC1);
-    d.enc1_rads = (prevEnc1 < 0.0f) ? 0.0f
-                  : angleDelta(d.enc1_deg, prevEnc1) * (float(M_PI) / 180.0f) * SENSOR_HZ;
-    prevEnc1 = d.enc1_deg;
+    d.enc1_rads = enc1MA.update(d.enc1_deg);
 #endif
 #if USE_ENC2
     d.enc2_deg  = mt6835_readAngle(CS_ENC2);
-    d.enc2_rads = (prevEnc2 < 0.0f) ? 0.0f
-                  : angleDelta(d.enc2_deg, prevEnc2) * (float(M_PI) / 180.0f) * SENSOR_HZ;
-    prevEnc2 = d.enc2_deg;
+    d.enc2_rads = enc2MA.update(d.enc2_deg);
 #endif
 #if USE_IMU
     bmi088_readAccel(CS_BMI_ACC, d.accel_x, d.accel_y, d.accel_z);
     bmi088_readGyro (CS_BMI_GYR, d.gyro_x,  d.gyro_y,  d.gyro_z);
 #endif
 }
+
+// ── Snelheids-PID (Core 1 only) ──────────────────────────────
+struct SpeedPID {
+    float setpoint = -10.0f;  // testwaarde: -10 rad/s = achteruit
+    float integral = 0.0f;
+    float prevMeas = 0.0f;
+
+    float update(float measured) {
+        static const float dt = 1.0f / SENSOR_HZ;
+        float error  = setpoint - measured;
+        integral    += error * dt;
+        // Anti-windup: begrens het integraal-aandeel
+        integral     = constrain(integral,
+                                 -SPEED_OUT_MAX / fmaxf(SPEED_KI, 1e-6f),
+                                  SPEED_OUT_MAX / fmaxf(SPEED_KI, 1e-6f));
+        float deriv  = (measured - prevMeas) / dt;
+        prevMeas     = measured;
+        return constrain(SPEED_KP * error + SPEED_KI * integral - SPEED_KD * deriv,
+                         -SPEED_OUT_MAX, SPEED_OUT_MAX);
+    }
+};
+static SpeedPID speedPID;
+static float    driveVoltage = 0.0f;
 
 // ── Core 1: motor-regelloop (1 kHz) ──────────────────────────
 void motorTask(void*) {
@@ -142,11 +189,22 @@ void motorTask(void*) {
 
         readSensors(local);
 
+#if USE_ENC1
+        driveVoltage        = speedPID.update(local.enc1_rads);
+        local.speedSetpoint = speedPID.setpoint;
+        local.driveOut      = driveVoltage;
+#endif
+#if USE_ENC2
+        static SpeedPID speedPID2;
+        static float    driveVoltage2 = 0.0f;
+        driveVoltage2 = speedPID2.update(local.enc2_rads);
+#endif
+
 #if USE_MOTOR1 && USE_ENC1
-        motor1.loop(DRIVE_VOLTAGE_V, local.enc1_deg * DEG_TO_RAD);
+        motor1.loop(driveVoltage, local.enc1_deg * DEG_TO_RAD);
 #endif
 #if USE_MOTOR2 && USE_ENC2
-        motor2.loop(DRIVE_VOLTAGE_V, local.enc2_deg * DEG_TO_RAD);
+        motor2.loop(driveVoltage2, local.enc2_deg * DEG_TO_RAD);
 #endif
 
         portENTER_CRITICAL(&dataMux);
@@ -182,10 +240,11 @@ void slowTask(void*) {
         snap = sharedSensors;
         portEXIT_CRITICAL(&dataMux);
 
-        char buf[160];
+        char buf[200];
         int n = 0;
 #if USE_ENC1
-        n += snprintf(buf+n, sizeof(buf)-n, "enc1=%.2f° (%.1f rad/s)  ", snap.enc1_deg, snap.enc1_rads);
+        n += snprintf(buf+n, sizeof(buf)-n, "enc1=%.2f° %.1f rad/s  sp=%.1f drv=%.3fV  ",
+            snap.enc1_deg, snap.enc1_rads, snap.speedSetpoint, snap.driveOut);
 #endif
 #if USE_ENC2
         n += snprintf(buf+n, sizeof(buf)-n, "enc2=%.2f° (%.1f rad/s)  ", snap.enc2_deg, snap.enc2_rads);
