@@ -32,7 +32,7 @@
 #define SENS_MISO  19
 #define SENS_MOSI  22
 
-#define SENSOR_HZ        1000
+#define SENSOR_HZ        1000 // was 1000
 #define MA_SIZE            8 // was 16
 #define ALIGN_VOLTAGE_V  0.3f
 
@@ -110,7 +110,7 @@ static void readSensors(SensorData& d) {
 
 // ── Snelheids-PID ─────────────────────────────────────────────
 struct SpeedPID {
-    float setpoint = 1.0f; // anti cogging bij setpoint 1.0 is lekker smooth
+    float setpoint = 20.0f; // anti cogging bij setpoint 1.0 is lekker smooth
     float integral = 0.0f;
     float prevMeas = 0.0f;
 
